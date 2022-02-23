@@ -423,7 +423,7 @@ template <typename T_Param>
 struct Conv2dKind
     : public OpMapperBase<T_Param, FusedActivationAction<0, T_Param>> {};
 
-struct FullyConnectedMapper
+struct DenseMapper
     : public OpMapperBase<
           TfLiteFullyConnectedParams,
           FusedActivationAction<0, TfLiteFullyConnectedParams>> {
@@ -437,7 +437,7 @@ struct FullyConnectedMapper
     auto weight_tensor = context->tensors[node->inputs->data[1]];
 
     if (input_tensor.type != weight_tensor.type) {
-      TFLITE_LOG_PROD(TFLITE_LOG_ERROR, "hybrid data type is not supported in fullyconnected.");
+      TFLITE_LOG_PROD(TFLITE_LOG_ERROR, "hybrid data type is not supported in dense.");
       return false;
     }
     if (builtin->weights_format ==
@@ -460,41 +460,17 @@ struct FullyConnectedMapper
                    std::vector<std::shared_ptr<tim::vx::Tensor>>& inputs,
                    std::vector<std::shared_ptr<tim::vx::Tensor>>& outputs,
                    const void* params) override {
-    TFLITE_LOG(TFLITE_LOG_INFO, "Creating fully connected op");
+    TFLITE_LOG(TFLITE_LOG_INFO, "Creating dense connected op");
     const auto builtin =
         reinterpret_cast<const TfLiteFullyConnectedParams*>(params);
-    auto input_tensor = inputs[0];
     auto weight_tensor = inputs[1];
-
-    if (input_tensor->GetShape().size() > 2 ||
-        (input_tensor->GetShape().size() == 2 &&
-         input_tensor->GetShape()[0] != weight_tensor->GetShape()[0])) {
-      uint32_t input_size = weight_tensor->GetShape()[0];
-      uint32_t total_input_size = 1;
-      for (int i = 0; i < input_tensor->GetShape().size(); i++) {
-        total_input_size *= input_tensor->GetShape()[i];
-      }
-      uint32_t input_batch = total_input_size / input_size;
-      auto reshape_output = delegate->GetGraph()->CreateTensor(
-          input_tensor->GetSpec().AsTransientSpec());
-      std::vector<uint32_t> new_shape{input_size, input_batch};
-      auto reshape_op =
-          delegate->GetGraph()->CreateOperation<tim::vx::ops::Reshape>(
-              new_shape);
-      (*reshape_op).BindInput(inputs[0]);
-      (*reshape_op).BindOutput(reshape_output);
-      delegate->GetOps().push_back(reshape_op);
-      inputs[0] = reshape_output;
-    }
-
     auto op =
-        delegate->GetGraph()->CreateOperation<tim::vx::ops::FullyConnected>(
+        delegate->GetGraph()->CreateOperation<tim::vx::ops::Dense>(
             0, weight_tensor->GetShape()[1]);
     (*op).BindInputs(inputs);
     (*op).BindOutputs(outputs);
 
     delegate->GetOps().push_back(std::move(op));
-
     return true;
   }
 };
@@ -1923,7 +1899,7 @@ static const std::map<int, createIOpMapItemFunc> reg = {
     TFLITE_OP_CODE, [] { return std::make_unique<MAPPER_TYPE>(__VA_ARGS__); } \
   }
 
-    REGISTER_OP_MAPPER(kTfLiteBuiltinFullyConnected, FullyConnectedMapper),
+    REGISTER_OP_MAPPER(kTfLiteBuiltinFullyConnected, DenseMapper),
     REGISTER_OP_MAPPER(kTfLiteBuiltinSoftmax, SoftmaxMapper),
     REGISTER_OP_MAPPER(kTfLiteBuiltinConv2d, Conv2dMapper),
     REGISTER_OP_MAPPER(kTfLiteBuiltinMaxPool2d,
